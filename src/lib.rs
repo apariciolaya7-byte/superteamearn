@@ -1,35 +1,65 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Result;
 
+// 1. Generar los bindings desde el archivo WIT
+wit_bindgen::generate!({
+    path: "wit/plugin.wit",
+    world: "plugin",
+});
+
+struct PluginComponent;
+
+// 2. Implementar directamente el trait Guest del mundo
+impl Guest for PluginComponent {
+    fn sanitize_rpc(raw_json: String) -> String {
+        masticar_rpc_solana(raw_json.as_bytes())
+            .unwrap_or_else(|_| r#"{"error":"error_de_parseo"}"#.to_string())
+    }
+}
+
+// 3. Exportar la estructura asociada al mundo "plugin"
+export!(PluginComponent);
+
 // ==========================================
-// 1. ESTRUCTURAS DE ENTRADA (Masticado Zero-Copy)
+// 1. ESTRUCTURAS FLEXIBLES (Soporte Multi-RPC)
 // ==========================================
 
-// Leemos solo lo necesario del JSON gigante de Solana usando referencias (&'a str)
-// para no gastar memoria RAM duplicando cadenas de texto.
 #[derive(Deserialize, Debug)]
 struct RpcResponse<'a> {
     #[serde(borrow)]
-    result: Option<RpcResult<'a>>,
+    result: Option<RpcResultFlex<'a>>,
 }
 
 #[derive(Deserialize, Debug)]
-struct RpcResult<'a> {
+struct RpcResultFlex<'a> {
+    // Si la respuesta es directa (ej: getTokenAccountBalance)
+    #[serde(rename = "uiAmount")]
+    ui_amount_direct: Option<f64>,
+
+    // Si la respuesta es envuelta en 'value' (ej: getAccountInfo)
     #[serde(borrow)]
-    value: Option<AccountValue<'a>>,
+    value: Option<AccountValueFlex<'a>>,
 }
 
 #[derive(Deserialize, Debug)]
-struct AccountValue<'a> {
+struct AccountValueFlex<'a> {
+    #[serde(default)]
     lamports: u64,
     #[serde(borrow)]
-    data: Option<AccountData<'a>>,
+    data: Option<AccountDataFlex<'a>>,
 }
 
+// Enum untagged: Serde intentará parsear como Parsed primero, 
+// y si falla, intentará como Raw/Otro sin lanzar error.
 #[derive(Deserialize, Debug)]
-struct AccountData<'a> {
-    #[serde(borrow)]
-    parsed: Option<ParsedData<'a>>,
+#[serde(untagged)]
+enum AccountDataFlex<'a> {
+    Parsed {
+        #[serde(borrow)]
+        parsed: Option<ParsedData<'a>>,
+    },
+    #[allow(dead_code)]
+    Raw(serde_json::Value),
 }
 
 #[derive(Deserialize, Debug)]
@@ -40,10 +70,10 @@ struct ParsedData<'a> {
 
 #[derive(Deserialize, Debug)]
 struct TokenInfo<'a> {
-    #[serde(borrow)]
-    mint: &'a str,
-    #[serde(borrow)]
-    owner: &'a str,
+    #[serde(borrow, default)]
+    mint: Option<&'a str>,
+    #[serde(borrow, default)]
+    owner: Option<&'a str>,
     #[serde(rename = "tokenAmount")]
     token_amount: Option<TokenAmount>,
 }
@@ -85,28 +115,52 @@ fn sanitizar_string(input: &str) -> String {
 /// un JSON masticado de menos de 100 tokens.
 #[inline(always)]
 pub fn masticar_rpc_solana(json_bytes: &[u8]) -> Result<String> {
-    // Zero-copy parsing directo desde bytes
-    let parsed_rpc: RpcResponse = serde_json::from_slice(json_bytes)?;
+    let parsed_rpc: RpcResponse = match serde_json::from_slice(json_bytes) {
+        Ok(res) => res,
+        Err(_) => return Ok(r#"{"error":"json_malformado"}"#.to_string()),
+    };
 
-    // Extracción segura usando Option (evita panics si el JSON no es de un Token)
     if let Some(res) = parsed_rpc.result {
+        // --- CASO 1: Respuesta directa de balance (getTokenAccountBalance) ---
+        if let Some(balance_directo) = res.ui_amount_direct {
+            let view = CleanAccountView {
+                mint: "desconocido_directo".to_string(),
+                owner: "desconocido_directo".to_string(),
+                balance: balance_directo,
+                sol_rent_lamports: 0,
+            };
+            return serde_json::to_string(&view);
+        }
+
+        // --- CASO 2: Respuesta estándar envuelta en 'value' ---
         if let Some(val) = res.value {
             let lamports = val.lamports;
 
-            if let Some(info) = val.data.and_then(|d| d.parsed).and_then(|p| p.info) {
-                let balance_limpio = CleanAccountView {
-                    mint: sanitizar_string(info.mint),
-                    owner: sanitizar_string(info.owner),
-                    balance: info.token_amount.and_then(|t| t.ui_amount).unwrap_or(0.0),
+            if let Some(AccountDataFlex::Parsed { parsed: Some(p) }) = val.data {
+                if let Some(info) = p.info {
+                    let view = CleanAccountView {
+                        mint: sanitizar_string(info.mint.unwrap_or("sin_mint")),
+                        owner: sanitizar_string(info.owner.unwrap_or("sin_owner")),
+                        balance: info.token_amount.and_then(|t| t.ui_amount).unwrap_or(0.0),
+                        sol_rent_lamports: lamports,
+                    };
+                    return serde_json::to_string(&view);
+                }
+            }
+
+            // --- CASO 3: Es una cuenta SOL nativa (no SPL-Token) ---
+            if lamports > 0 {
+                let view_sol = CleanAccountView {
+                    mint: "So11111111111111111111111111111111111111112".to_string(), // SOL Nativo
+                    owner: "cuenta_sol_nativa".to_string(),
+                    balance: lamports as f64 / 1_000_000_000.0, // Convertir Lamports a SOL
                     sol_rent_lamports: lamports,
                 };
-
-                return serde_json::to_string(&balance_limpio);
+                return serde_json::to_string(&view_sol);
             }
         }
     }
 
-    // Salida fallback segura si la cuenta no es un SPL-Token
     Ok(r#"{"status":"datos_no_reconocidos_o_cuenta_vacia"}"#.to_string())
 }
 
