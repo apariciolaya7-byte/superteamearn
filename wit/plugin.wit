@@ -1,0 +1,5 @@
+package zeroclaw:plugin@0.1.0;
+
+world plugin {
+    export sanitize-rpc: func(raw-json: string) -> string;
+}
