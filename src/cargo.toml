@@ -1,0 +1,43 @@
+[package]
+name = "zeroclaw-plugin-rpc-trimmer"
+version = "0.1.0"
+edition = "2021"
+authors = ["Tu Nombre <tu@email.com>"]
+description = "Plugin liviano y seguro para recortar respuestas RPC de Solana y prevenir Prompt Injection en ZeroClaw"
+
+# ==============================================================================
+# CONFIGURACIÓN DE COMPILACIÓN (CRÍTICO PARA WASM/WASI)
+# ==============================================================================
+[lib]
+# 'cdylib' es obligatorio para compilar bibliotecas C-compatibles o componentes WASM.
+# Le dice a Rust que genere un archivo .wasm ejecutable en lugar de una librería Rust estándar (.rlib).
+crate-type = ["cdylib"]
+
+# ==============================================================================
+# DEPENDENCIAS MÍNIMAS Y OPTIMIZADAS
+# ==============================================================================
+[dependencies]
+# 1. Serde: El motor de serialización/deserialización.
+# - 'default-features = false': Desactiva la biblioteca estándar completa (std) para evitar
+#   que intente usar funciones del sistema operativo no soportadas en WASM.
+# - 'features = ["alloc"]': Habilita solo el manejo de memoria dinámica (necesario para Vectores y Strings).
+# - 'features = ["derive"]': Permite usar macro-atributos como #[derive(Deserialize)].
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+
+# 2. Serde JSON: El parseador ultra rápido de JSON.
+# - Desactivamos las funciones por defecto por la misma razón de compatibilidad con WASM.
+# - 'features = ["alloc"]': Permite parsear JSONs sin importar la biblioteca estándar (std) del sistema.
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+# NOTA IMPORTANTE DE ARQUITECTURA:
+# No agregamos 'solana-sdk', 'tokio' ni 'reqwest'. 
+# Esas librerías romperían la compilación en 'wasm32-wasip2' por usar hilos (threads) y sockets nativos.
+
+# ==============================================================================
+# PERFILES DE OPTIMIZACIÓN (PARA REDUCIR TAMAÑO Y GANAR VELOCIDAD)
+# ==============================================================================
+[profile.release]
+opt-level = "s"     # Optimiza el tamaño del binario WASM (Small size)
+lto = true          # Link-Time Optimization: elimina todo el código muerto no utilizado
+codegen-units = 1   # Mayor optimización en la compilación a expensas de un poco más de tiempo de build
+panic = "abort"     # Elimina el código de desempaquetado de errores (unwinding), reduciendo peso
