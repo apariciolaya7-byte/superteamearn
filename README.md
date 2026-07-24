@@ -1,4 +1,4 @@
-# ⚡ ZeroClaw Solana RPC Trimmer & Security Plugin
+#  ZeroClaw Solana RPC Trimmer & Security Plugin
 
 An ultra-fast, zero-allocation WASM Component designed for the **ZeroClaw** ecosystem, targeting `wasm32-wasip2`.
 
@@ -6,7 +6,7 @@ This plugin acts as a lightweight intermediate layer between Solana RPC nodes an
 
 ---
 
-## 🎯 Key Problems Solved
+##  Key Problems Solved
 
 1. **Context Window Bloat (Token Waste):** Standard Solana RPC responses include hundreds of lines of non-essential metadata (slots, blockhashes, signatures) that exhaust the LLM context window.
 2. **On-Chain Prompt Injection Defense:** Attackers can inject malicious system instructions into SPL token names, symbols, or account metadata (e.g., inside `mint` or `owner` fields). This plugin strips and neutralizes these control characters before they reach the model.
@@ -14,7 +14,7 @@ This plugin acts as a lightweight intermediate layer between Solana RPC nodes an
 
 ---
 
-## 🚀 Technical Architecture
+##  Technical Architecture
 
 - **Zero-Copy Parsing (`serde`):** Direct byte/slice manipulation (`&str` / `&[u8]`) to minimize heap allocations during parsing.
 - **Inlined Nano-Functions (`#[inline(always)]`):** Encapsulates atomic routines (byte sanitation, delimiter checks, character stripping) directly into the CPU/WASM execution pipeline with zero function-call overhead.
@@ -22,7 +22,7 @@ This plugin acts as a lightweight intermediate layer between Solana RPC nodes an
 
 ---
 
-## 📊 Benchmarks & Stress Testing
+##  Benchmarks & Stress Testing
 
 Benchmarked locally using Rust's integrated test engine under simulated attack and heavy-payload conditions:
 
